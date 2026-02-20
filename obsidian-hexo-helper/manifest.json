@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-hexo-helper",
+  "name": "Hexo Helper",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Auto-manage Hexo assets and fix compatibility issues.",
+  "author": "Trae Assistant",
+  "authorUrl": "https://github.com/luoyinhui",
+  "isDesktopOnly": false
+}
