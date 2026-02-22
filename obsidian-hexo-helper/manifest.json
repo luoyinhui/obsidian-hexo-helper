@@ -1,0 +1,10 @@
+{
+    "id": "hexo-helper-enhanced",
+    "name": "Hexo Helper Enhanced",
+    "version": "1.0.0",
+    "minAppVersion": "0.15.0",
+    "description": "Simplified Hexo integration with auto image handling and link copying, enhanced with file menu support.",
+    "author": "luoyinhui",
+    "authorUrl": "https://github.com/luoyinhui/obsidian-hexo-helper",
+    "isDesktopOnly": false
+}
