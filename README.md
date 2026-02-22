@@ -3,18 +3,24 @@
 - Obsidian 预览 + Hexo 网站发布
 - 主要支持：
 
-	- **图片预览**：Obsidian 和 Hexo 对于`..`这种相对路径支持不一致
-		- 解决方案：直接hexo s/d之前相对路径转为绝对路径
+	- **图片预览和黏贴保存处理**：
+		- 问题：Obsidian 和 Hexo 对于`..`这种相对路径支持不一致
+		- 解决方案：
+			- 通过脚本直接hexo s/d之前相对路径转为绝对路径
+			- 在 Obsidian 中粘贴图片时，自动保存到 Hexo 指定的 `source/img/文章名 `目录，并插入正确的 Markdown 链接
 
-	- **链接跳转**：Obsidian 能识别并跳转 Hexo 的永久链接（`abbrlink`），即 `[标题](/posts/123456/)`
+	- **链接跳转**：
+		- 文件列表拖拽和右键 copy hex link /文章标题右键 copy hexo link ：复制 Hexo 的永久链接（`abbrlink`），例如：`[标题](/posts/123456/#标题名)`
+		- 实现 Obsidian 识别该类链接
 
-	- **图片粘贴**：在 Obsidian 中粘贴图片时，自动保存到 Hexo 指定的 `source/img` 目录，并插入正确的 Markdown 链接。
+	- **pdf预览**：
+		- 也通过脚本实现 Obsidian 语法和 Hexo 语法替换
  
 ### 2. 文件夹结构
 
 ```text
 
-Hexo_Obsidian_Toolkit/
+obsidian-hexo-helper/
 
 ├── obsidian-hexo-helper/       # Obsidian 插件本体
 
@@ -24,9 +30,9 @@ Hexo_Obsidian_Toolkit/
 
 ├── scripts/                    # 配套脚本
 
-│   ├── convert_to_relative.js  # [一次性] 旧文章路径修复脚本
+│   ├── convert_to_relative.js  # [一次性] 旧文章路径修复脚本 请根据自己blog进行修改
 
-│   └── fix-hexo-compat.js      # [推荐] Hexo 构建兼容脚本
+│   └── fix-hexo-compat.js      # [推荐] Hexo 兼容脚本
 
 ├── README.md                   # 英文说明文档
 
@@ -46,7 +52,7 @@ Hexo_Obsidian_Toolkit/
 
     *   Node.js 脚本，一次性批量将旧文章的 `/img/` 绝对路径转换为 `../img/` 相对路径。
 
-3.  **构建脚本 (`fix-hexo-compat.js`)**：
+3.  **兼容脚本 (`fix-hexo-compat.js`)**：
 
     *   Hexo Filter 脚本，在 `hexo generate` 阶段将 `../img/` 还原为 `/img/`。
     *   放到博客根目录下scripts文件夹
