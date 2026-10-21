@@ -2,8 +2,6 @@
 
 在 Obsidian 里直接写 Hexo 博客的辅助插件：自动生成 Front-matter、保存图片、识别并跳转 Hexo 永久链接，再配合一个 Hexo 脚本解决 Obsidian 与 Hexo 的路径差异。
 
-> 适用于「Obsidian 仓库根目录 = Hexo 博客根目录」的用法。
-
 - 项目名：`obsidian-hexo-helper`
 - GitHub：<https://github.com/luoyinhui/obsidian-hexo-helper>
 
@@ -37,6 +35,8 @@ abbrlink:
 - 没有 Front-matter：生成完整模板
 - `abbrlink` 由「文件名 + 当前时间」经 CRC32 计算，取十六进制字符串
 
+【区别于abbrlink插件】：是在部署时对新文件进行abbrlink随机生成，但是这里需要 obsidian 内可能在第一次部署前有 hexo 链接需求，因此设计提前。
+
 ```yaml
 ---
 title: 文章标题
@@ -52,23 +52,15 @@ abbrlink: 97c40ef2
 ### 图片粘贴 / 拖拽
 
 - 仅对 `source/_posts/`、`source/_drafts/` 下的 Markdown 生效
-- 图片保存到「Markdown 所在文件夹的同级 `img/`」下的 `<abbrlink>/`，即 `<文章目录的上一级>/img/<abbrlink>/<abbrlink>-<序号>.<扩展名>`
+- 图片保存到 `../img/<abbrlink>/<abbrlink>-<序号>.<扩展名>`
 - 文件名冲突时自动递增序号，不会覆盖已有图片
 - 在文章中插入相对链接，例如 `![<abbrlink>-1.png](../img/<abbrlink>/<abbrlink>-1.png)`，Obsidian 可直接预览
 
-常见位置：
-
-| 文章路径 | 图片目录 |
-| --- | --- |
-| `source/_posts/文章.md` | `source/img/<abbrlink>/` |
-| `source/_drafts/文章.md` | `source/img/<abbrlink>/` |
-| `source/_drafts/private/文章.md` | `source/_drafts/img/<abbrlink>/` |
-
 ### 跨文章复制图片
 
-从另一篇 Hexo 文章复制一段包含本地图片的 Markdown，粘贴到当前文章时，插件会把图片复制到当前文章的图片目录并改写链接。
-
-仅当剪贴板内容与最近一次站内复制一致、且距离复制不超过 5 分钟时触发，避免误处理外部内容。
+- 从另一篇 Hexo 文章复制一段包含本地图片的 Markdown，粘贴到当前文章时，插件会把图片复制到当前文章的图片目录并改写链接。
+- 图片拥有文章所属性质防止 Obsidian 的 Clear Unused Picture 插件误删
+- 如果确认图片不复制可使用复制代码方式
 
 ### Hexo 链接识别与跳转
 
@@ -93,6 +85,16 @@ abbrlink: 97c40ef2
 - 目标文件已存在时中止并提示
 - 图片目录会随文章一起移动，文章内的 `../img/` 相对链接保持不变
 
+### 手动移动文章自动搬迁图片
+
+- 在 Obsidian 中手动移动 `source/_posts/`、`source/_drafts/` 下的文章时，插件按文章移动前后的相对路径计算图片目录，并自动搬迁
+- 图片目录按「文章所在目录的上一级 `img/`」计算，例如 `source/img/<abbrlink>/` ↔ `source/_drafts/img/<abbrlink>/`
+- 目标 `img` 目录不存在时自动创建；目标已有同名文件时跳过，不会覆盖
+- 如果按相对路径找不到 `<abbrlink>` 图片文件夹，会扫描 `source/_posts/`、`source/_drafts/` 下所有 `img` 文件夹查找同名目录，找到后搬迁到新的相对位置
+- 找到多个同名目录时会合并到目标位置，同名文件跳过不覆盖
+- 仅在图片根目录发生变化时搬迁；同一 `img` 目录内的重命名不会移动图片
+- `abbrlink` 缺失或非法时只移动文章，并提示图片目录未搬迁
+
 ## 路径约定
 
 ```text
@@ -101,10 +103,9 @@ abbrlink: 97c40ef2
 ├── source/
 │   ├── _posts/                  # 已发布文章
 │   ├── _drafts/                 # 草稿
-│   │   ├── private/             # 私有草稿
-│   │   └── img/                 # 私有草稿的图片
-│   │       └── <abbrlink>/
-│   └── img/                     # _posts / _drafts 一级文章的图片
+│   │   ├── private/             # 分类草稿
+│   │   └── img/                 # 分类草稿的图片
+│   └── img/                     # 草稿一级目录和发布文章的图片
 │       └── <abbrlink>/
 │           ├── <abbrlink>-1.png
 │           └── <abbrlink>-2.jpg
@@ -112,10 +113,8 @@ abbrlink: 97c40ef2
     └── fix-hexo-compat.js
 ```
 
-- 图片目录规则：`<文章所在目录的上一级>/img/<abbrlink>/`，`img` 与 Markdown 所在文件夹同级
-- 文章直接放在 `_posts/`、`_drafts/` 下时，图片位于 `source/img/<abbrlink>/`
-- 私有草稿在 `_drafts/private/` 下，图片位于 `source/_drafts/img/<abbrlink>/`
-- 这些路径写死在 `main.js` 顶部常量中，调整目录结构时需要同步修改
+- 文章建议放在 `_posts/`、`_drafts/` 目录下，插件按「文章所在目录的上一级 `img/`」计算图片位置
+
 
 ## 安装
 
@@ -158,14 +157,16 @@ node scripts/convert_to_relative.js
 4. **复制链接**：编辑器或文件列表右键 `Copy Hexo Link`
 5. **跳转**：在 Obsidian 中点击 `/posts/...` 链接
 6. **发布 / 撤回**：文件列表右键 `hexo_发布至博客` 或 `hexo_收归私有`
+7. **移动文章**：在文件列表中拖动文章到其他目录，图片目录会自动跟随搬迁
 
 ## 注意事项
 
 - 旧文章如果没有 `abbrlink`，粘贴图片会被跳过并提示；需要手动补一个唯一值，`Copy Hexo Link` 也依赖它
+- 手动移动文章时如果 `abbrlink` 缺失或非法，文章会移动但图片目录不会搬迁，需要手动处理
 - `abbrlink` 需全局唯一，插件按 abbrlink 定位文章
 - 插件没有设置界面，路径常量集中在 `main.js` 顶部
 - 图片转存只处理标准 Markdown `![alt](path)`，不处理 `![[...]]` 嵌入语法
-- 插件对 `source/_posts`、`source/_drafts` 下所有层级的 Markdown 生效，图片按「文章目录的上一级 `img/`」存放；若文章放在子目录，图片不会落在 `source/img`，需要自行确认 Hexo 端的路径映射
+- 插件对 `source/_posts`、`source/_drafts` 下所有层级的 Markdown 生效，目录层级会影响图片位置。
 
 ## 文件结构
 

@@ -22,6 +22,18 @@ function isManagedMarkdownFile(file) {
     );
 }
 
+function isManagedMarkdownPath(filePath) {
+    const normalizedPath = normalizeVaultPath(filePath);
+    return normalizedPath.endsWith('.md') && (
+        normalizedPath.startsWith(`${POSTS_ROOT}/`) ||
+        normalizedPath.startsWith(`${DRAFTS_ROOT}/`)
+    );
+}
+
+function isValidAbbrlink(value) {
+    return /^[A-Za-z0-9]+$/.test(String(value || '').trim());
+}
+
 function shouldApplyManagedTemplate(file) {
     return !!file && file.extension === 'md' && (
         file.path.startsWith(`${POSTS_ROOT}/`) ||
@@ -196,6 +208,7 @@ module.exports = class HexoHelperPlugin extends Plugin {
         this.abbrlinkMap = new Map();
         this.lastCopiedMarkdownContext = null;
         this.pendingNewManagedFiles = new Set();
+        this.programmaticImageMoves = new Set();
 
         await this.buildAbbrlinkMap();
         this.app.workspace.onLayoutReady(() => {
@@ -660,6 +673,9 @@ abbrlink: ${abbrlink}
     async handleManagedMarkdownRename(file, oldPath) {
         if (isManagedMarkdownFile(file)) {
             await this.updateAbbrlinkMap(file);
+            if (!this.programmaticImageMoves.has(file.path)) {
+                await this.migrateImagesOnManagedMove(file, oldPath);
+            }
             return;
         }
 
@@ -667,6 +683,37 @@ abbrlink: ${abbrlink}
             if (v === oldPath) {
                 this.abbrlinkMap.delete(k);
             }
+        }
+    }
+
+    async migrateImagesOnManagedMove(file, oldPath) {
+        if (!isManagedMarkdownPath(oldPath) || !isManagedMarkdownFile(file)) return;
+
+        const oldImageBase = getManagedImageBaseForFile(oldPath);
+        const newImageBase = getManagedImageBaseForFile(file.path);
+        if (oldImageBase === newImageBase) return;
+
+        const abbrlink = await this.getAbbrlinkForFile(file);
+        if (!isValidAbbrlink(abbrlink)) {
+            this.showPersistentNotice(`Article moved, but abbrlink is missing or invalid; images were not migrated: ${file.path}`);
+            return;
+        }
+
+        try {
+            const result = await this.moveManagedImageFolder(abbrlink, oldImageBase, newImageBase);
+            if (result.skippedCount > 0) {
+                this.showPersistentNotice(`Article moved, but ${result.skippedCount} image file(s) already existed in ${newImageBase}/${abbrlink}.`);
+                return;
+            }
+            if (result.movedCount > 0) {
+                const sourceLabel = result.sourceFolders.length === 1
+                    ? result.sourceFolders[0]
+                    : `${result.sourceFolders.length} locations`;
+                this.showSuccessNotice(`Image folder migrated to ${newImageBase}/${abbrlink} from ${sourceLabel}`);
+            }
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            this.showPersistentNotice(`Article moved, but image migration failed: ${reason}`);
         }
     }
 
@@ -789,13 +836,71 @@ abbrlink: ${abbrlink}
     }
 
     async moveManagedImageFolder(abbrlink, sourceBaseFolder, targetBaseFolder) {
-        if (!abbrlink) return { movedCount: 0, skippedCount: 0, changed: false };
+        if (!isValidAbbrlink(abbrlink)) {
+            return { movedCount: 0, skippedCount: 0, changed: false, sourceFolders: [] };
+        }
 
-        const sourceFolder = path.join(sourceBaseFolder, abbrlink);
         const targetFolder = path.join(targetBaseFolder, abbrlink);
+        let sourceFolders = [];
+
+        if (sourceBaseFolder !== targetBaseFolder) {
+            const sourceFolder = path.join(sourceBaseFolder, abbrlink);
+            if (this.app.vault.getAbstractFileByPath(sourceFolder)) {
+                sourceFolders = [sourceFolder];
+            } else {
+                sourceFolders = this.findManagedImageFolderPathsByAbbrlink(abbrlink)
+                    .filter((folderPath) => folderPath !== targetFolder);
+            }
+        }
+
+        if (sourceFolders.length === 0) {
+            return { movedCount: 0, skippedCount: 0, changed: false, sourceFolders: [] };
+        }
 
         await this.ensureFolderPath(targetBaseFolder);
-        return this.moveOrMergeFolder(sourceFolder, targetFolder);
+
+        let movedCount = 0;
+        let skippedCount = 0;
+        for (const sourceFolder of sourceFolders) {
+            const result = await this.moveOrMergeFolder(sourceFolder, targetFolder);
+            movedCount += result.movedCount;
+            skippedCount += result.skippedCount;
+        }
+
+        return { movedCount, skippedCount, changed: movedCount > 0, sourceFolders };
+    }
+
+    findManagedImageFolderPathsByAbbrlink(abbrlink) {
+        const results = [];
+
+        const visit = (folder) => {
+            if (!Array.isArray(folder?.children)) return;
+
+            for (const child of folder.children) {
+                if (!Array.isArray(child.children)) continue;
+
+                if (child.name === 'img') {
+                    const candidate = child.children.find((entry) => (
+                        Array.isArray(entry.children) && entry.name === abbrlink
+                    ));
+                    if (candidate) {
+                        results.push(candidate.path);
+                    }
+                    continue;
+                }
+
+                visit(child);
+            }
+        };
+
+        for (const rootPath of [POSTS_ROOT, DRAFTS_ROOT]) {
+            const root = this.app.vault.getAbstractFileByPath(rootPath);
+            if (root) {
+                visit(root);
+            }
+        }
+
+        return results;
     }
 
     async publishManagedFile(file) {
@@ -810,11 +915,20 @@ abbrlink: ${abbrlink}
         const abbrlink = await this.getAbbrlinkForFile(file);
         const sourceImageBase = getManagedImageBaseForFile(file.path);
         const targetImageBase = getManagedImageBaseForFile(targetPath);
+        const needsImageMove = sourceImageBase !== targetImageBase;
 
+        if (needsImageMove && !isValidAbbrlink(abbrlink)) {
+            this.showPersistentNotice(`Publish aborted, abbrlink is missing or invalid: ${file.path}`);
+            return;
+        }
+
+        this.programmaticImageMoves.add(targetPath);
         try {
             await this.ensureFolderPath(POSTS_ROOT);
             await this.app.vault.rename(file, targetPath);
-            const imageMoveResult = await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase);
+            const imageMoveResult = needsImageMove
+                ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
+                : { movedCount: 0, skippedCount: 0, changed: false };
 
             if (imageMoveResult.skippedCount > 0) {
                 this.showPersistentNotice(`Article published, but ${imageMoveResult.skippedCount} image file(s) already existed in ${targetImageBase}/${abbrlink}.`);
@@ -825,6 +939,8 @@ abbrlink: ${abbrlink}
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             this.showPersistentNotice(`Publish failed: ${reason}`);
+        } finally {
+            this.programmaticImageMoves.delete(targetPath);
         }
     }
 
@@ -840,11 +956,20 @@ abbrlink: ${abbrlink}
         const abbrlink = await this.getAbbrlinkForFile(file);
         const sourceImageBase = getManagedImageBaseForFile(file.path);
         const targetImageBase = getManagedImageBaseForFile(targetPath);
+        const needsImageMove = sourceImageBase !== targetImageBase;
 
+        if (needsImageMove && !isValidAbbrlink(abbrlink)) {
+            this.showPersistentNotice(`Privatize aborted, abbrlink is missing or invalid: ${file.path}`);
+            return;
+        }
+
+        this.programmaticImageMoves.add(targetPath);
         try {
             await this.ensureFolderPath(PRIVATE_DRAFTS_ROOT);
             await this.app.vault.rename(file, targetPath);
-            const imageMoveResult = await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase);
+            const imageMoveResult = needsImageMove
+                ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
+                : { movedCount: 0, skippedCount: 0, changed: false };
 
             if (imageMoveResult.skippedCount > 0) {
                 this.showPersistentNotice(`Article privatized, but ${imageMoveResult.skippedCount} image file(s) already existed in ${targetImageBase}/${abbrlink}.`);
@@ -855,6 +980,8 @@ abbrlink: ${abbrlink}
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             this.showPersistentNotice(`Privatize failed: ${reason}`);
+        } finally {
+            this.programmaticImageMoves.delete(targetPath);
         }
     }
 
