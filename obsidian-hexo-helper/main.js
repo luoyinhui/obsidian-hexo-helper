@@ -209,6 +209,7 @@ module.exports = class HexoHelperPlugin extends Plugin {
         this.lastCopiedMarkdownContext = null;
         this.pendingNewManagedFiles = new Set();
         this.programmaticImageMoves = new Set();
+        this.imageLinkRepairTimers = new Map();
 
         await this.buildAbbrlinkMap();
         this.app.workspace.onLayoutReady(() => {
@@ -246,10 +247,10 @@ module.exports = class HexoHelperPlugin extends Plugin {
             return this.originalOpenLinkText.call(this.app.workspace, linktext, sourcePath, newLeaf, openViewState);
         };
 
-        this.registerEvent(this.app.vault.on('modify', (file) => {
-            if (isManagedMarkdownFile(file)) {
-                this.updateAbbrlinkMap(file);
-            }
+        this.registerEvent(this.app.vault.on('modify', async (file) => {
+            if (!isManagedMarkdownFile(file)) return;
+            const abbrlink = await this.updateAbbrlinkMap(file);
+            this.queueManagedImageLinkRepair(file, abbrlink);
         }));
 
         this.registerEvent(this.app.vault.on('create', async (file) => {
@@ -326,6 +327,12 @@ module.exports = class HexoHelperPlugin extends Plugin {
     }
 
     onunload() {
+        if (this.imageLinkRepairTimers) {
+            for (const timer of this.imageLinkRepairTimers.values()) {
+                clearTimeout(timer);
+            }
+            this.imageLinkRepairTimers.clear();
+        }
         if (this.originalOpenLinkText) {
             this.app.workspace.openLinkText = this.originalOpenLinkText;
         }
@@ -436,6 +443,7 @@ abbrlink: ${abbrlink}
         if (abbrlink) {
             this.abbrlinkMap.set(abbrlink, file.path);
         }
+        return abbrlink;
     }
 
     async resolveManagedFileByAbbrlink(abbrlink) {
@@ -672,10 +680,11 @@ abbrlink: ${abbrlink}
 
     async handleManagedMarkdownRename(file, oldPath) {
         if (isManagedMarkdownFile(file)) {
-            await this.updateAbbrlinkMap(file);
+            const abbrlink = await this.updateAbbrlinkMap(file);
             if (!this.programmaticImageMoves.has(file.path)) {
                 await this.migrateImagesOnManagedMove(file, oldPath);
             }
+            this.queueManagedImageLinkRepair(file, abbrlink);
             return;
         }
 
@@ -701,7 +710,6 @@ abbrlink: ${abbrlink}
 
         try {
             const result = await this.moveManagedImageFolder(abbrlink, oldImageBase, newImageBase);
-            this.scheduleManagedImageLinkRepair(file, abbrlink);
 
             if (result.skippedCount > 0) {
                 this.showPersistentNotice(`Article moved, but ${result.skippedCount} image file(s) already existed in ${newImageBase}/${abbrlink}.`);
@@ -719,12 +727,19 @@ abbrlink: ${abbrlink}
         }
     }
 
-    scheduleManagedImageLinkRepair(file, abbrlink) {
-        for (const delay of [0, 500, 1500]) {
-            setTimeout(() => {
-                this.restoreManagedImageLinks(file, abbrlink).catch(() => {});
-            }, delay);
+    queueManagedImageLinkRepair(file, abbrlink) {
+        if (!isValidAbbrlink(abbrlink)) return;
+
+        const existingTimer = this.imageLinkRepairTimers.get(file.path);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
         }
+
+        const timer = setTimeout(() => {
+            this.imageLinkRepairTimers.delete(file.path);
+            this.restoreManagedImageLinks(file, abbrlink).catch(() => {});
+        }, 300);
+        this.imageLinkRepairTimers.set(file.path, timer);
     }
 
     async restoreManagedImageLinks(file, abbrlink) {
@@ -770,18 +785,49 @@ abbrlink: ${abbrlink}
         };
 
         try {
-            if (typeof this.app.vault.process === 'function') {
-                await this.app.vault.process(file, rewrite);
-                return;
-            }
-
             const content = await this.app.vault.read(file);
             const updated = rewrite(content);
             if (updated !== content) {
                 await this.app.vault.modify(file, updated);
             }
+            this.syncOpenEditorImageLinks(file, rewrite);
         } catch (error) {
             console.error('Hexo Helper: Failed to restore relative image links', error);
+        }
+    }
+
+    syncOpenEditorImageLinks(file, rewrite) {
+        const workspace = this.app.workspace;
+        if (!workspace || typeof workspace.getLeavesOfType !== 'function') return;
+
+        for (const leaf of workspace.getLeavesOfType('markdown')) {
+            const view = leaf?.view;
+            if (!(view instanceof MarkdownView) || view.file?.path !== file.path) continue;
+
+            const editor = view.editor;
+            if (!editor) continue;
+
+            const current = editor.getValue();
+            const updated = rewrite(current);
+            if (updated === current) continue;
+
+            let start = 0;
+            while (start < current.length && start < updated.length && current[start] === updated[start]) {
+                start++;
+            }
+
+            let currentEnd = current.length;
+            let updatedEnd = updated.length;
+            while (currentEnd > start && updatedEnd > start && current[currentEnd - 1] === updated[updatedEnd - 1]) {
+                currentEnd--;
+                updatedEnd--;
+            }
+
+            editor.replaceRange(
+                updated.slice(start, updatedEnd),
+                editor.offsetToPos(start),
+                editor.offsetToPos(currentEnd)
+            );
         }
     }
 
@@ -998,7 +1044,7 @@ abbrlink: ${abbrlink}
                 ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
                 : { movedCount: 0, skippedCount: 0, changed: false };
             if (isValidAbbrlink(abbrlink)) {
-                this.scheduleManagedImageLinkRepair(file, abbrlink);
+                this.queueManagedImageLinkRepair(file, abbrlink);
             }
 
             if (imageMoveResult.skippedCount > 0) {
@@ -1042,7 +1088,7 @@ abbrlink: ${abbrlink}
                 ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
                 : { movedCount: 0, skippedCount: 0, changed: false };
             if (isValidAbbrlink(abbrlink)) {
-                this.scheduleManagedImageLinkRepair(file, abbrlink);
+                this.queueManagedImageLinkRepair(file, abbrlink);
             }
 
             if (imageMoveResult.skippedCount > 0) {
