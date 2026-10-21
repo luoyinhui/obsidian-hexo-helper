@@ -701,6 +701,8 @@ abbrlink: ${abbrlink}
 
         try {
             const result = await this.moveManagedImageFolder(abbrlink, oldImageBase, newImageBase);
+            this.scheduleManagedImageLinkRepair(file, abbrlink);
+
             if (result.skippedCount > 0) {
                 this.showPersistentNotice(`Article moved, but ${result.skippedCount} image file(s) already existed in ${newImageBase}/${abbrlink}.`);
                 return;
@@ -714,6 +716,72 @@ abbrlink: ${abbrlink}
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             this.showPersistentNotice(`Article moved, but image migration failed: ${reason}`);
+        }
+    }
+
+    scheduleManagedImageLinkRepair(file, abbrlink) {
+        for (const delay of [0, 500, 1500]) {
+            setTimeout(() => {
+                this.restoreManagedImageLinks(file, abbrlink).catch(() => {});
+            }, delay);
+        }
+    }
+
+    async restoreManagedImageLinks(file, abbrlink) {
+        if (!isManagedMarkdownFile(file) || !isValidAbbrlink(abbrlink)) return;
+
+        const imageBase = getManagedImageBaseForFile(file.path);
+        const imageFolder = this.app.vault.getAbstractFileByPath(path.join(imageBase, abbrlink));
+        if (!imageFolder || !Array.isArray(imageFolder.children)) return;
+
+        const imageNames = new Set();
+        for (const child of imageFolder.children) {
+            if (!Array.isArray(child.children)) {
+                imageNames.add(child.name);
+            }
+        }
+        if (imageNames.size === 0) return;
+
+        const rewrite = (content) => {
+            if (!content.includes('![')) return content;
+
+            return content.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, alt, rawTarget) => {
+                const targetMatch = String(rawTarget).trim().match(/^(<[^>]+>|[^\s]+)([\s\S]*)$/);
+                if (!targetMatch) return full;
+
+                const linkTarget = targetMatch[1].replace(/^<|>$/g, '');
+                const suffix = targetMatch[2] || '';
+                if (!isLocalImageLink(linkTarget) || !isImagePath(linkTarget)) return full;
+
+                let decodedTarget = linkTarget;
+                try {
+                    decodedTarget = decodeURIComponent(linkTarget);
+                } catch (e) {}
+
+                const imageName = path.basename(decodedTarget);
+                if (!imageNames.has(imageName)) return full;
+
+                const expectedPath = path.join(imageBase, abbrlink, imageName);
+                const resolvedPath = path.normalize(path.join(path.dirname(file.path), decodedTarget));
+                if (resolvedPath === expectedPath) return full;
+
+                return `![${alt}](${buildManagedImageLink(file, abbrlink, imageName)}${suffix})`;
+            });
+        };
+
+        try {
+            if (typeof this.app.vault.process === 'function') {
+                await this.app.vault.process(file, rewrite);
+                return;
+            }
+
+            const content = await this.app.vault.read(file);
+            const updated = rewrite(content);
+            if (updated !== content) {
+                await this.app.vault.modify(file, updated);
+            }
+        } catch (error) {
+            console.error('Hexo Helper: Failed to restore relative image links', error);
         }
     }
 
@@ -929,6 +997,9 @@ abbrlink: ${abbrlink}
             const imageMoveResult = needsImageMove
                 ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
                 : { movedCount: 0, skippedCount: 0, changed: false };
+            if (isValidAbbrlink(abbrlink)) {
+                this.scheduleManagedImageLinkRepair(file, abbrlink);
+            }
 
             if (imageMoveResult.skippedCount > 0) {
                 this.showPersistentNotice(`Article published, but ${imageMoveResult.skippedCount} image file(s) already existed in ${targetImageBase}/${abbrlink}.`);
@@ -970,6 +1041,9 @@ abbrlink: ${abbrlink}
             const imageMoveResult = needsImageMove
                 ? await this.moveManagedImageFolder(abbrlink, sourceImageBase, targetImageBase)
                 : { movedCount: 0, skippedCount: 0, changed: false };
+            if (isValidAbbrlink(abbrlink)) {
+                this.scheduleManagedImageLinkRepair(file, abbrlink);
+            }
 
             if (imageMoveResult.skippedCount > 0) {
                 this.showPersistentNotice(`Article privatized, but ${imageMoveResult.skippedCount} image file(s) already existed in ${targetImageBase}/${abbrlink}.`);
