@@ -52,9 +52,17 @@ abbrlink: 97c40ef2
 ### 图片粘贴 / 拖拽
 
 - 仅对 `source/_posts/`、`source/_drafts/` 下的 Markdown 生效
-- 图片保存到 `source/img/<abbrlink>/<abbrlink>-<序号>.<扩展名>`
+- 图片保存到「Markdown 所在文件夹的同级 `img/`」下的 `<abbrlink>/`，即 `<文章目录的上一级>/img/<abbrlink>/<abbrlink>-<序号>.<扩展名>`
 - 文件名冲突时自动递增序号，不会覆盖已有图片
 - 在文章中插入相对链接，例如 `![<abbrlink>-1.png](../img/<abbrlink>/<abbrlink>-1.png)`，Obsidian 可直接预览
+
+常见位置：
+
+| 文章路径 | 图片目录 |
+| --- | --- |
+| `source/_posts/文章.md` | `source/img/<abbrlink>/` |
+| `source/_drafts/文章.md` | `source/img/<abbrlink>/` |
+| `source/_drafts/private/文章.md` | `source/_drafts/img/<abbrlink>/` |
 
 ### 跨文章复制图片
 
@@ -93,8 +101,10 @@ abbrlink: 97c40ef2
 ├── source/
 │   ├── _posts/                  # 已发布文章
 │   ├── _drafts/                 # 草稿
-│   │   └── private/             # 私有草稿
-│   └── img/                     # 普通文章的图片
+│   │   ├── private/             # 私有草稿
+│   │   └── img/                 # 私有草稿的图片
+│   │       └── <abbrlink>/
+│   └── img/                     # _posts / _drafts 一级文章的图片
 │       └── <abbrlink>/
 │           ├── <abbrlink>-1.png
 │           └── <abbrlink>-2.jpg
@@ -102,8 +112,9 @@ abbrlink: 97c40ef2
     └── fix-hexo-compat.js
 ```
 
-- 文章建议直接放在 `_posts/`、`_drafts/` 一级目录下，插件按「文章所在目录的上一级 `img/`」计算图片位置
-- 私有草稿的图片位于 `source/_drafts/img/<abbrlink>/`
+- 图片目录规则：`<文章所在目录的上一级>/img/<abbrlink>/`，`img` 与 Markdown 所在文件夹同级
+- 文章直接放在 `_posts/`、`_drafts/` 下时，图片位于 `source/img/<abbrlink>/`
+- 私有草稿在 `_drafts/private/` 下，图片位于 `source/_drafts/img/<abbrlink>/`
 - 这些路径写死在 `main.js` 顶部常量中，调整目录结构时需要同步修改
 
 ## 安装
@@ -154,7 +165,7 @@ node scripts/convert_to_relative.js
 - `abbrlink` 需全局唯一，插件按 abbrlink 定位文章
 - 插件没有设置界面，路径常量集中在 `main.js` 顶部
 - 图片转存只处理标准 Markdown `![alt](path)`，不处理 `![[...]]` 嵌入语法
-- 插件对 `source/_posts`、`source/_drafts` 下所有层级的 Markdown 生效，但目录层级会影响图片位置计算，建议文章放在一级目录
+- 插件对 `source/_posts`、`source/_drafts` 下所有层级的 Markdown 生效，图片按「文章目录的上一级 `img/`」存放；若文章放在子目录，图片不会落在 `source/img`，需要自行确认 Hexo 端的路径映射
 
 ## 文件结构
 
