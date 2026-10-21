@@ -4,6 +4,29 @@
 
 > 适用于「Obsidian 仓库根目录 = Hexo 博客根目录」的用法。
 
+- 项目名：`obsidian-hexo-helper`
+- GitHub：<https://github.com/luoyinhui/obsidian-hexo-helper>
+
+## 前置依赖
+
+本插件依赖 Hexo 的 `abbrlink` 永久链接方案，博客端需要安装并启用 [`hexo-abbrlink`](https://github.com/Rozbo/hexo-abbrlink)：
+
+```bash
+npm install hexo-abbrlink --save
+```
+
+```yaml
+# _config.yml
+permalink: posts/:abbrlink/
+abbrlink:
+  alg: crc32
+  rep: hex
+```
+
+- 插件会把 `abbrlink` 提前写进 Front-matter，`hexo-abbrlink` 会直接沿用，不会重新生成
+- 不安装 `hexo-abbrlink` 时，Hexo 无法生成 `/posts/<abbrlink>/` 形式的地址，复制和跳转的链接都会失效
+- 使用其他 abbrlink 插件时，最终文章地址同样需要是 `/posts/<abbrlink>/`
+
 ## 功能
 
 ### 新建文章自动生成 Front-matter
@@ -85,6 +108,8 @@ abbrlink: 97c40ef2
 
 ## 安装
 
+以下步骤默认已完成「前置依赖」中的 `hexo-abbrlink` 配置。
+
 ### 1. 安装 Obsidian 插件
 
 1. 克隆或下载本仓库
@@ -147,5 +172,6 @@ obsidian-hexo-helper/          # 仓库根目录
 ## 兼容性
 
 - Obsidian ≥ 0.15.0
+- 依赖 Hexo 插件 `hexo-abbrlink`，且 `permalink` 需为 `posts/:abbrlink/`
 - Hexo：使用标准 `before_post_render` Filter API，无需修改主题
 - 桌面端与移动端均可加载；剪贴板图片和右键菜单的实际行为取决于 Obsidian 客户端实现
